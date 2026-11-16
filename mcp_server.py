@@ -369,7 +369,7 @@ def process_jsonrpc_request(req):
             "result": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "waan-mcp", "version": "1.0.0"}
+                "serverInfo": {"name": "waan-mcp", "version": "1.2.0"}
             }
         }
 
@@ -430,7 +430,7 @@ class McpRequestHandler(http.server.BaseHTTPRequestHandler):
                 "status": "running" if is_mcp_enabled() else "disabled",
                 "enabled": is_mcp_enabled(),
                 "name": "waan-mcp",
-                "version": "1.0.0",
+                "version": "1.2.0",
                 "tools_count": len(TOOLS),
                 "tools": [t["name"] for t in TOOLS]
             }
