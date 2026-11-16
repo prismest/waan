@@ -198,6 +198,50 @@ class TestMcpServerProtocol(WaanBaseTestCase):
         resp_enabled = mcp_server.process_jsonrpc_request(req)
         self.assertNotIn("isError", resp_enabled.get("result", {}))
 
+    def test_project_creation_and_task_filtering(self):
+        mcp_server.set_mcp_status(enabled=True)
+        add_proj_req = {
+            "jsonrpc": "2.0",
+            "id": "proj-1",
+            "method": "tools/call",
+            "params": {"name": "waan_add_project", "arguments": {"name": "Website Redesign", "color": "purple", "icon": "globe"}}
+        }
+        resp = mcp_server.process_jsonrpc_request(add_proj_req)
+        self.assertIn("Project created", resp["result"]["content"][0]["text"])
+
+        list_proj_req = {
+            "jsonrpc": "2.0",
+            "id": "proj-2",
+            "method": "tools/call",
+            "params": {"name": "waan_list_projects", "arguments": {}}
+        }
+        resp_list = mcp_server.process_jsonrpc_request(list_proj_req)
+        projects = json.loads(resp_list["result"]["content"][0]["text"])
+        self.assertEqual(len(projects), 1)
+        self.assertEqual(projects[0]["name"], "Website Redesign")
+        self.assertEqual(projects[0]["color"], "purple")
+        proj_id = projects[0]["id"]
+
+        add_task_req = {
+            "jsonrpc": "2.0",
+            "id": "proj-3",
+            "method": "tools/call",
+            "params": {"name": "waan_add_task", "arguments": {"title": "Design hero mockup", "project_id": proj_id}}
+        }
+        mcp_server.process_jsonrpc_request(add_task_req)
+
+        list_task_req = {
+            "jsonrpc": "2.0",
+            "id": "proj-4",
+            "method": "tools/call",
+            "params": {"name": "waan_list_tasks", "arguments": {"project_id": proj_id}}
+        }
+        task_resp = mcp_server.process_jsonrpc_request(list_task_req)
+        tasks = json.loads(task_resp["result"]["content"][0]["text"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["title"], "Design hero mockup")
+        self.assertEqual(tasks[0]["project_id"], proj_id)
+
 
 if __name__ == "__main__":
     unittest.main()

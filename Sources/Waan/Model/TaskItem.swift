@@ -48,6 +48,7 @@ public struct TaskItem: Identifiable, Codable, Equatable {
     public var tags: [String]
     public var createdAt: String
     public var completedAt: String?
+    public var projectId: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -58,7 +59,8 @@ public struct TaskItem: Identifiable, Codable, Equatable {
         subtasks: [SubtaskItem] = [],
         tags: [String] = [],
         createdAt: String = ISO8601DateFormatter().string(from: Date()),
-        completedAt: String? = nil
+        completedAt: String? = nil,
+        projectId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -69,6 +71,7 @@ public struct TaskItem: Identifiable, Codable, Equatable {
         self.tags = tags
         self.createdAt = createdAt
         self.completedAt = completedAt
+        self.projectId = projectId
     }
 
     public var isCompleted: Bool { status == .completed }
