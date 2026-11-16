@@ -3,6 +3,7 @@ import SwiftUI
 private enum SidebarDestination: Hashable {
     case now
     case tasks(FilterType)
+    case project(String)
     case focusInsights
 }
 
@@ -13,6 +14,7 @@ public struct MainWindowView: View {
     @ObservedObject var langManager: LanguageManager = .shared
     @State private var showingAIGuide: Bool = false
     @State private var showingChat: Bool = false
+    @State private var showingNewProject: Bool = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var destination: SidebarDestination = .now
 
@@ -50,11 +52,62 @@ public struct MainWindowView: View {
                         .font(.system(size: 13))
                         .tag(SidebarDestination.focusInsights)
                         .padding(.vertical, 2)
+
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    Section(header: HStack {
+                        Text(langManager.currentLanguage == .th ? "โปรเจกต์" : "Projects")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(action: { showingNewProject = true }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(langManager.currentLanguage == .th ? "สร้างโปรเจกต์ใหม่" : "New Project")
+                    }) {
+                        ForEach(store.projects) { project in
+                            let progress = store.projectProgress(id: project.id)
+                            HStack(spacing: 8) {
+                                Image(systemName: project.icon)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(project.displayColor)
+                                Text(project.name)
+                                    .font(.system(size: 13))
+                                Spacer()
+                                if progress.total > 0 {
+                                    Text("\(progress.done)/\(progress.total)")
+                                        .font(.system(size: 11))
+                                        .monospacedDigit()
+                                        .foregroundColor(.secondary.opacity(0.8))
+                                }
+                            }
+                            .tag(SidebarDestination.project(project.id))
+                            .padding(.vertical, 2)
+                            .contextMenu {
+                                Button(langManager.currentLanguage == .th ? "ลบโปรเจกต์" : "Delete Project") {
+                                    store.deleteProject(id: project.id)
+                                    if case .project(let pid) = destination, pid == project.id {
+                                        destination = .tasks(.all)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 .listStyle(.sidebar)
                 .onChange(of: destination) {
-                    if case .tasks(let filter) = destination {
+                    switch destination {
+                    case .tasks(let filter):
+                        store.selectedProjectId = nil
                         store.selectedFilter = filter
+                    case .project(let pid):
+                        store.selectedProjectId = pid
+                    case .now, .focusInsights:
+                        store.selectedProjectId = nil
                     }
                 }
 
@@ -107,7 +160,7 @@ public struct MainWindowView: View {
                         FocusNowView(store: store)
                     case .focusInsights:
                         FocusAnalyticsView(store: store)
-                    case .tasks:
+                    case .tasks, .project:
                         taskListColumn
                             .searchable(text: $store.searchText, prompt: langManager.text(.searchPlaceholder))
                     }
@@ -140,6 +193,11 @@ public struct MainWindowView: View {
             .sheet(isPresented: $showingAIGuide) {
                 AIGuideSheetView(mcpServer: mcpServer)
             }
+            .sheet(isPresented: $showingNewProject) {
+                NewProjectSheet(store: store) { newId in
+                    destination = .project(newId)
+                }
+            }
         }
         .navigationSplitViewStyle(.balanced)
             }
@@ -150,18 +208,11 @@ public struct MainWindowView: View {
 
     private var taskListColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(store.selectedFilter.localizedTitle(for: langManager.currentLanguage))
-                    .font(.system(size: 20, weight: .bold))
-                Text("\(store.filteredTasks.count)")
-                    .font(.system(size: 13, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
-                Spacer()
+            if let pid = store.selectedProjectId, let project = store.project(for: pid) {
+                projectHeader(project)
+            } else {
+                standardHeader
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
 
             QuickInputBar(store: store)
                 .padding(.horizontal, 24)
@@ -177,19 +228,96 @@ public struct MainWindowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(store.filteredTasks) { task in
-                            TaskRowView(store: store, task: task)
-                            Divider()
-                                .opacity(0.3)
-                                .padding(.leading, 32)
+                    if store.selectedFilter == .completed {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            ForEach(store.groupedCompletedTasks) { group in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 6) {
+                                        Text(group.bucket.localizedTitle(for: langManager.currentLanguage))
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.secondary)
+                                        Text("\(group.tasks.count)")
+                                            .font(.system(size: 11, weight: .medium))
+                                            .monospacedDigit()
+                                            .foregroundColor(.secondary.opacity(0.6))
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.top, 4)
+
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(group.tasks) { task in
+                                            TaskRowView(store: store, task: task)
+                                            Divider()
+                                                .opacity(0.3)
+                                                .padding(.leading, 32)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyVStack(spacing: 0) {
+                            ForEach(store.filteredTasks) { task in
+                                TaskRowView(store: store, task: task)
+                                Divider()
+                                    .opacity(0.3)
+                                    .padding(.leading, 32)
+                            }
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 6)
                 }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 6)
             }
         }
+    }
+
+    private func projectHeader(_ project: ProjectItem) -> some View {
+        let progress = store.projectProgress(id: project.id)
+        let isTh = langManager.currentLanguage == .th
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: project.icon)
+                    .foregroundColor(project.displayColor)
+                    .font(.system(size: 18))
+                Text(project.name)
+                    .font(.system(size: 20, weight: .bold))
+                Spacer()
+                if progress.total > 0 {
+                    Text(isTh
+                         ? "\(progress.done)/\(progress.total) งาน (\(Int(progress.percent * 100))%)"
+                         : "\(progress.done)/\(progress.total) done (\(Int(progress.percent * 100))%)")
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if progress.total > 0 {
+                ProgressView(value: progress.percent)
+                    .tint(project.displayColor)
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var standardHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(store.selectedFilter.localizedTitle(for: langManager.currentLanguage))
+                .font(.system(size: 20, weight: .bold))
+            Text("\(store.filteredTasks.count)")
+                .font(.system(size: 13, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
     }
 
     @ViewBuilder
@@ -332,5 +460,79 @@ struct AIGuideSheetView: View {
         }
         .padding(20)
         .frame(width: 540, height: 420)
+    }
+}
+
+private struct NewProjectSheet: View {
+    @ObservedObject var store: TaskStore
+    @ObservedObject var langManager: LanguageManager = .shared
+    @Environment(\.dismiss) private var dismiss
+    let onCreated: (String) -> Void
+
+    @State private var name: String = ""
+    @State private var selectedColor: String = "blue"
+    @State private var selectedIcon: String = "folder.fill"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(langManager.currentLanguage == .th ? "สร้างโปรเจกต์ใหม่" : "New Project")
+                .font(.system(size: 15, weight: .semibold))
+
+            TextField(langManager.currentLanguage == .th ? "ชื่อโปรเจกต์..." : "Project name...", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(langManager.currentLanguage == .th ? "สี" : "Color")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(ProjectItem.presetColors, id: \.self) { c in
+                        Circle()
+                            .fill(ProjectItem.color(for: c))
+                            .frame(width: 18, height: 18)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.primary, lineWidth: selectedColor == c ? 2 : 0)
+                            )
+                            .onTapGesture { selectedColor = c }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(langManager.currentLanguage == .th ? "ไอคอน" : "Icon")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(ProjectItem.presetIcons, id: \.self) { icon in
+                        Image(systemName: icon)
+                            .font(.system(size: 12))
+                            .foregroundColor(selectedIcon == icon ? ProjectItem.color(for: selectedColor) : .secondary)
+                            .padding(5)
+                            .background(selectedIcon == icon ? Color.secondary.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                            .onTapGesture { selectedIcon = icon }
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(langManager.currentLanguage == .th ? "ยกเลิก" : "Cancel") {
+                    dismiss()
+                }
+                .buttonStyle(.plain)
+
+                Button(langManager.currentLanguage == .th ? "สร้าง" : "Create") {
+                    let newId = store.addProject(name: name, color: selectedColor, icon: selectedIcon)
+                    dismiss()
+                    if !newId.isEmpty { onCreated(newId) }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.top, 4)
+        }
+        .padding(18)
+        .frame(width: 300)
     }
 }
