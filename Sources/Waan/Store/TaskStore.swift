@@ -35,7 +35,9 @@ public final class TaskStore: ObservableObject {
     public static let shared = TaskStore()
 
     @Published public var tasks: [TaskItem] = []
+    @Published public var projects: [ProjectItem] = []
     @Published public var selectedFilter: FilterType = .today
+    @Published public var selectedProjectId: String? = nil
     @Published public var searchText: String = ""
 
     private let db: DatabaseManager
@@ -54,6 +56,7 @@ public final class TaskStore: ObservableObject {
 
     public func reloadTasks() {
         self.tasks = db.fetchAllTasks()
+        self.projects = db.fetchAllProjects()
     }
 
     public var pendingTasksCount: Int {
@@ -71,12 +74,25 @@ public final class TaskStore: ObservableObject {
     public var filteredTasks: [TaskItem] {
         var result = tasks
 
+        if let pid = selectedProjectId {
+            result = result.filter { $0.projectId == pid }
+        }
+
         if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let query = searchText.lowercased()
             result = result.filter {
                 $0.title.lowercased().contains(query) ||
                 $0.subtasks.contains(where: { $0.title.lowercased().contains(query) }) ||
                 $0.tags.contains(where: { $0.lowercased().contains(query) })
+            }
+        }
+
+        if selectedProjectId != nil {
+            return result.sorted {
+                if $0.isCompleted != $1.isCompleted {
+                    return !$0.isCompleted
+                }
+                return ($0.completedAt ?? $0.createdAt) > ($1.completedAt ?? $1.createdAt)
             }
         }
 
@@ -102,12 +118,26 @@ public final class TaskStore: ObservableObject {
         return tasks.filter { !$0.isCompleted && (($0.dueDate?.starts(with: todayStr) ?? true) || $0.priority == .urgent) }.count
     }
 
+    public func project(for id: String?) -> ProjectItem? {
+        guard let id = id else { return nil }
+        return projects.first { $0.id == id }
+    }
+
+    public func projectProgress(id: String) -> (done: Int, total: Int, percent: Double) {
+        let pTasks = tasks.filter { $0.projectId == id }
+        let done = pTasks.filter(\.isCompleted).count
+        let total = pTasks.count
+        let percent = total > 0 ? Double(done) / Double(total) : 0.0
+        return (done, total, percent)
+    }
+
     public func addTask(
         title: String,
         dueDate: String? = nil,
         priority: Priority = .normal,
         subtasks: [String] = [],
-        tags: [String] = []
+        tags: [String] = [],
+        projectId: String? = nil
     ) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -118,9 +148,33 @@ public final class TaskStore: ObservableObject {
             dueDate: dueDate,
             priority: priority,
             subtasks: subtaskItems,
-            tags: tags
+            tags: tags,
+            projectId: projectId ?? selectedProjectId
         )
         db.insert(task: task)
+        reloadTasks()
+    }
+
+    @discardableResult
+    public func addProject(name: String, color: String = "blue", icon: String = "folder.fill") -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let project = ProjectItem(name: trimmed, color: color, icon: icon)
+        db.insert(project: project)
+        reloadTasks()
+        return project.id
+    }
+
+    public func deleteProject(id: String) {
+        db.deleteProject(id: id)
+        if selectedProjectId == id {
+            selectedProjectId = nil
+        }
+        reloadTasks()
+    }
+
+    public func updateTaskProject(taskId: String, projectId: String?) {
+        db.updateTaskProject(taskId: taskId, projectId: projectId)
         reloadTasks()
     }
 

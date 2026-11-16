@@ -32,6 +32,16 @@ public struct TaskRowView: View {
 
                     if hasMetadata {
                         HStack(spacing: 8) {
+                            if let pid = task.projectId, store.selectedProjectId != pid, let proj = store.project(for: pid) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: proj.icon)
+                                        .font(.system(size: 8.5))
+                                    Text(proj.name)
+                                        .font(.system(size: 10.5, weight: .medium))
+                                }
+                                .foregroundColor(proj.displayColor)
+                            }
+
                             if task.isCompleted,
                                let timeText = CompletedTasksGrouper.formatCompletedTime(task.completedAt, lang: langManager.currentLanguage) {
                                 Text(timeText)
@@ -122,13 +132,43 @@ public struct TaskRowView: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .contextMenu {
+            Menu(langManager.currentLanguage == .th ? "โปรเจกต์" : "Project") {
+                Button(langManager.currentLanguage == .th ? "ไม่มีโปรเจกต์ (Inbox)" : "None") {
+                    store.updateTaskProject(taskId: task.id, projectId: nil)
+                }
+                if !store.projects.isEmpty {
+                    Divider()
+                    ForEach(store.projects) { p in
+                        Button(action: { store.updateTaskProject(taskId: task.id, projectId: p.id) }) {
+                            HStack {
+                                Text(p.name)
+                                if task.projectId == p.id {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: {
+                PomodoroManager.shared.detachTask(id: task.id)
+                withAnimation { store.deleteTask(id: task.id) }
+            }) {
+                Label(langManager.currentLanguage == .th ? "ลบงาน" : "Delete", systemImage: "trash")
+            }
+        }
     }
 
     private var hasMetadata: Bool {
         let hasDue = !(task.dueDate ?? "").isEmpty
         let hasTag = !FocusAnalytics.primaryCategory(tags: task.tags).isEmpty
         let hasCompletion = task.isCompleted && task.completedAt != nil
-        return hasDue || hasTag || !task.subtasks.isEmpty || hasCompletion || isHovering
+        let hasProj = task.projectId != nil && store.selectedProjectId != task.projectId
+        return hasDue || hasTag || !task.subtasks.isEmpty || hasCompletion || hasProj || isHovering
     }
 
     @ViewBuilder

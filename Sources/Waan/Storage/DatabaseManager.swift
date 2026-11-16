@@ -55,7 +55,15 @@ public final class DatabaseManager: @unchecked Sendable {
             subtasks_json TEXT DEFAULT '[]',
             tags_json TEXT DEFAULT '[]',
             created_at TEXT NOT NULL,
-            completed_at TEXT
+            completed_at TEXT,
+            project_id TEXT
+        );
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            color TEXT DEFAULT 'blue',
+            icon TEXT DEFAULT 'folder.fill',
+            created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS focus_sessions (
             id TEXT PRIMARY KEY,
@@ -71,12 +79,13 @@ public final class DatabaseManager: @unchecked Sendable {
         );
         """
         sqlite3_exec(db, sql, nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE tasks ADD COLUMN project_id TEXT;", nil, nil, nil)
     }
 
     public func fetchAllTasks() -> [TaskItem] {
         return queue.sync {
             var tasks: [TaskItem] = []
-            let sql = "SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at FROM tasks ORDER BY created_at DESC;"
+            let sql = "SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at, project_id FROM tasks ORDER BY created_at DESC;"
             var stmt: OpaquePointer?
 
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -93,6 +102,7 @@ public final class DatabaseManager: @unchecked Sendable {
                     let tags = tagsJson.data(using: .utf8).flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? []
                     let createdAt = String(cString: sqlite3_column_text(stmt, 7))
                     let completedAt = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+                    let projectId = sqlite3_column_text(stmt, 9).map { String(cString: $0) }
 
                     let task = TaskItem(
                         id: id,
@@ -103,7 +113,8 @@ public final class DatabaseManager: @unchecked Sendable {
                         subtasks: subtasks,
                         tags: tags,
                         createdAt: createdAt,
-                        completedAt: completedAt
+                        completedAt: completedAt,
+                        projectId: projectId
                     )
                     tasks.append(task)
                 }
@@ -116,8 +127,8 @@ public final class DatabaseManager: @unchecked Sendable {
     public func insert(task: TaskItem) {
         queue.sync {
             let sql = """
-            INSERT OR REPLACE INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            INSERT OR REPLACE INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """
             var stmt: OpaquePointer?
 
@@ -150,9 +161,75 @@ public final class DatabaseManager: @unchecked Sendable {
                     sqlite3_bind_null(stmt, 9)
                 }
 
+                if let proj = task.projectId {
+                    sqlite3_bind_text(stmt, 10, (proj as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_null(stmt, 10)
+                }
+
                 if sqlite3_step(stmt) != SQLITE_DONE {
                     print("Waan Error: Failed to insert task")
                 }
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    public func fetchAllProjects() -> [ProjectItem] {
+        return queue.sync {
+            var projects: [ProjectItem] = []
+            let sql = "SELECT id, name, color, icon, created_at FROM projects ORDER BY created_at ASC;"
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    let name = String(cString: sqlite3_column_text(stmt, 1))
+                    let color = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "blue"
+                    let icon = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "folder.fill"
+                    let createdAt = String(cString: sqlite3_column_text(stmt, 4))
+                    projects.append(ProjectItem(id: id, name: name, color: color, icon: icon, createdAt: createdAt))
+                }
+            }
+            sqlite3_finalize(stmt)
+            return projects
+        }
+    }
+
+    public func insert(project: ProjectItem) {
+        queue.sync {
+            let sql = "INSERT OR REPLACE INTO projects (id, name, color, icon, created_at) VALUES (?, ?, ?, ?, ?);"
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (project.id as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (project.name as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 3, (project.color as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 4, (project.icon as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 5, (project.createdAt as NSString).utf8String, -1, nil)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
+    public func deleteProject(id: String) {
+        queue.sync {
+            let escaped = id.replacingOccurrences(of: "'", with: "''")
+            sqlite3_exec(db, "UPDATE tasks SET project_id = NULL WHERE project_id = '\(escaped)'; DELETE FROM projects WHERE id = '\(escaped)';", nil, nil, nil)
+        }
+    }
+
+    public func updateTaskProject(taskId: String, projectId: String?) {
+        queue.sync {
+            let sql = "UPDATE tasks SET project_id = ? WHERE id = ?;"
+            var stmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                if let pid = projectId {
+                    sqlite3_bind_text(stmt, 1, (pid as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_null(stmt, 1)
+                }
+                sqlite3_bind_text(stmt, 2, (taskId as NSString).utf8String, -1, nil)
+                sqlite3_step(stmt)
             }
             sqlite3_finalize(stmt)
         }

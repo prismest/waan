@@ -60,9 +60,23 @@ def get_db():
         subtasks_json TEXT DEFAULT '[]',
         tags_json TEXT DEFAULT '[]',
         created_at TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        project_id TEXT
     );
     """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT 'blue',
+        icon TEXT DEFAULT 'folder.fill',
+        created_at TEXT NOT NULL
+    );
+    """)
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT;")
+    except Exception:
+        pass
     conn.commit()
     return conn
 
@@ -153,6 +167,27 @@ TOOLS = [
             },
             "required": ["target"]
         }
+    },
+    {
+        "name": "waan_list_projects",
+        "description": "List all active projects in Waan.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "waan_add_project",
+        "description": "Create a new project in Waan with optional color and icon.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Project name"},
+                "color": {"type": "string", "description": "Color name (blue, purple, pink, orange, green, gray)"},
+                "icon": {"type": "string", "description": "SF Symbol icon name (default: folder.fill)"}
+            },
+            "required": ["name"]
+        }
     }
 ]
 
@@ -166,22 +201,33 @@ def tool_add_task(cursor, args):
     subtasks_raw = args.get("subtasks", [])
     subtasks = [{"id": str(uuid.uuid4()), "title": s, "isDone": False} for s in subtasks_raw]
     tags = args.get("tags", [])
+    project_id = args.get("project_id")
 
     task_id = str(uuid.uuid4())
     created_at = datetime.now().isoformat()
 
     cursor.execute("""
-    INSERT INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at)
-    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-    """, (task_id, title, due, priority, json.dumps(subtasks, ensure_ascii=False), json.dumps(tags, ensure_ascii=False), created_at))
+    INSERT INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at, project_id)
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    """, (task_id, title, due, priority, json.dumps(subtasks, ensure_ascii=False), json.dumps(tags, ensure_ascii=False), created_at, project_id))
     return f"Task added: '{title}' (ID: {task_id[:8]}...)"
 
 def tool_list_tasks(cursor, args):
     status = args.get("status", "pending")
-    if status == "all":
-        cursor.execute("SELECT id, title, due_date, priority, status, subtasks_json, tags_json FROM tasks ORDER BY created_at DESC")
-    else:
-        cursor.execute("SELECT id, title, due_date, priority, status, subtasks_json, tags_json FROM tasks WHERE status = ? ORDER BY created_at DESC", (status,))
+    project_id = args.get("project_id")
+    query = "SELECT id, title, due_date, priority, status, subtasks_json, tags_json, project_id FROM tasks"
+    params = []
+    clauses = []
+    if status != "all":
+        clauses.append("status = ?")
+        params.append(status)
+    if project_id:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY created_at DESC"
+    cursor.execute(query, params)
     
     rows = cursor.fetchall()
     tasks = []
@@ -193,9 +239,28 @@ def tool_list_tasks(cursor, args):
             "priority": r[3],
             "status": r[4],
             "subtasks": json.loads(r[5] or "[]"),
-            "tags": json.loads(r[6] or "[]")
+            "tags": json.loads(r[6] or "[]"),
+            "project_id": r[7]
         })
     return json.dumps(tasks, ensure_ascii=False, indent=2)
+
+def tool_list_projects(cursor, args):
+    cursor.execute("SELECT id, name, color, icon, created_at FROM projects ORDER BY created_at ASC")
+    rows = cursor.fetchall()
+    projects = [{"id": r[0], "name": r[1], "color": r[2], "icon": r[3], "created_at": r[4]} for r in rows]
+    return json.dumps(projects, ensure_ascii=False, indent=2)
+
+def tool_add_project(cursor, args):
+    name = args.get("name", "").strip()
+    if not name:
+        return "Error: Project name cannot be empty."
+    color = args.get("color", "blue")
+    icon = args.get("icon", "folder.fill")
+    project_id = str(uuid.uuid4())
+    created_at = datetime.now().isoformat()
+    cursor.execute("INSERT INTO projects (id, name, color, icon, created_at) VALUES (?, ?, ?, ?, ?)",
+                   (project_id, name, color, icon, created_at))
+    return f"Project created: '{name}' (ID: {project_id[:8]}...)"
 
 SQL_FIND_TASK = "SELECT id, title FROM tasks WHERE id = ? OR title LIKE ? LIMIT 1"
 
@@ -269,6 +334,8 @@ TOOL_HANDLERS = {
     "waan_breakdown_task": tool_breakdown_task,
     "waan_update_task": tool_update_task,
     "waan_delete_task": tool_delete_task,
+    "waan_list_projects": tool_list_projects,
+    "waan_add_project": tool_add_project,
 }
 
 def handle_tool_call(name, args):

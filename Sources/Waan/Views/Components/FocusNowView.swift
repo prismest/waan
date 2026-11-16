@@ -88,7 +88,11 @@ public struct FocusNowView: View {
                     .font(.system(size: compact ? 10.5 : 12, weight: .semibold))
                     .foregroundColor(reasonColor(rec.reason))
 
-                if !category.isEmpty {
+                if let pid = task.projectId, let proj = store.project(for: pid) {
+                    Text("· \(proj.name)")
+                        .font(.system(size: compact ? 10.5 : 12, weight: .medium))
+                        .foregroundColor(proj.displayColor)
+                } else if !category.isEmpty {
                     Text("· #\(category)")
                         .font(.system(size: compact ? 10.5 : 12))
                         .foregroundColor(.secondary)
@@ -321,11 +325,17 @@ public struct FocusModeView: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let task = boundTask {
-                        let cat = FocusAnalytics.primaryCategory(tags: task.tags)
-                        if !cat.isEmpty {
-                            Text("#\(cat)")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
+                        if let pid = task.projectId, let proj = store.project(for: pid) {
+                            Text(proj.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(proj.displayColor)
+                        } else {
+                            let cat = FocusAnalytics.primaryCategory(tags: task.tags)
+                            if !cat.isEmpty {
+                                Text("#\(cat)")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
                         }
                         if !task.subtasks.isEmpty {
                             TaskSubtaskChecklist(store: store, task: task, compact: false)

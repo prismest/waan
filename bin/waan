@@ -34,13 +34,27 @@ def init_db():
         subtasks_json TEXT DEFAULT '[]',
         tags_json TEXT DEFAULT '[]',
         created_at TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        project_id TEXT
     );
     """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT 'blue',
+        icon TEXT DEFAULT 'folder.fill',
+        created_at TEXT NOT NULL
+    );
+    """)
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT;")
+    except Exception:
+        pass
     conn.commit()
     return conn
 
-def add_task(title, due=None, priority="normal", subtasks=None, tags=None):
+def add_task(title, due=None, priority="normal", subtasks=None, tags=None, project_id=None):
     conn = init_db()
     task_id = str(uuid.uuid4())
     created_at = datetime.now().isoformat()
@@ -51,22 +65,30 @@ def add_task(title, due=None, priority="normal", subtasks=None, tags=None):
 
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at)
-    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-    """, (task_id, title, due, priority, json.dumps(subtask_items, ensure_ascii=False), json.dumps(tag_items, ensure_ascii=False), created_at))
+    INSERT INTO tasks (id, title, due_date, priority, status, subtasks_json, tags_json, created_at, project_id)
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    """, (task_id, title, due, priority, json.dumps(subtask_items, ensure_ascii=False), json.dumps(tag_items, ensure_ascii=False), created_at, project_id))
     conn.commit()
     conn.close()
     return task_id
 
-def list_tasks(status=None):
+def list_tasks(status=None, project_id=None):
     conn = init_db()
     cursor = conn.cursor()
-    if status == "all":
-        cursor.execute("SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at FROM tasks ORDER BY created_at DESC")
-    elif status == "completed":
-        cursor.execute("SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at FROM tasks WHERE status='completed' ORDER BY completed_at DESC")
-    else:
-        cursor.execute("SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at FROM tasks WHERE status='pending' ORDER BY created_at DESC")
+    query = "SELECT id, title, due_date, priority, status, subtasks_json, tags_json, created_at, completed_at, project_id FROM tasks"
+    clauses = []
+    params = []
+    if status == "completed":
+        clauses.append("status='completed'")
+    elif status != "all":
+        clauses.append("status='pending'")
+    if project_id:
+        clauses.append("project_id=?")
+        params.append(project_id)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY " + ("completed_at DESC" if status == "completed" else "created_at DESC")
+    cursor.execute(query, params)
     
     rows = cursor.fetchall()
     conn.close()
@@ -81,7 +103,8 @@ def list_tasks(status=None):
             "subtasks": json.loads(r[5] or "[]"),
             "tags": json.loads(r[6] or "[]"),
             "created_at": r[7],
-            "completed_at": r[8]
+            "completed_at": r[8],
+            "project_id": r[9]
         })
     return tasks
 
